@@ -1,0 +1,10 @@
+.git
+.github
+bin/.dev-tools
+build
+*.log
+.env
+.dev-ports.json
+.dev-ports.json.lock
+coverage.out
+coverage.html

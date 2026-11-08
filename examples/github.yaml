@@ -1,0 +1,9 @@
+# GitHub webhooks: HMAC-SHA256 of raw body without a timestamp.
+hmac:
+  enabled: true
+  secret-env: WEBHOOK_SECRET
+  algorithm: sha256
+  signature-header: X-Hub-Signature-256
+  signature-prefix: "sha256="
+  signature-encoding: hex
+  message-format: "{body}"

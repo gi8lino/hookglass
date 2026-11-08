@@ -1,0 +1,40 @@
+---
+project_name: hookglass
+version: 2
+
+builds:
+  - id: hookglass
+    main: ./cmd/hookglass
+    binary: hookglass
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.Version={{ .Tag }}
+
+dockers_v2:
+  - id: hookglass
+    ids:
+      - hookglass
+    dockerfile: Dockerfile.goreleaser
+    images:
+      - ghcr.io/gi8lino/hookglass
+    tags:
+      - "{{ .Tag }}"
+      - latest
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.created: "{{ .Date }}"
+      org.opencontainers.image.description: "{{ .ProjectName }}"
+      org.opencontainers.image.licenses: Apache-2.0
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.source: https://github.com/gi8lino/hookglass
+      org.opencontainers.image.title: "{{ .ProjectName }}"
+      org.opencontainers.image.url: https://github.com/gi8lino/hookglass
+      org.opencontainers.image.version: "{{ .Tag }}"

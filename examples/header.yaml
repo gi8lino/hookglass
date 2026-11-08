@@ -1,0 +1,5 @@
+# Expect an X-API-Key header matching WEBHOOK_API_KEY.
+header:
+  enabled: true
+  name: X-API-Key
+  value-env: WEBHOOK_API_KEY

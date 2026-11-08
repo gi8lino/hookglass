@@ -1,0 +1,14 @@
+# syntax=docker/dockerfile:1.28
+
+# GoReleaser supplies one prebuilt binary per TARGETPLATFORM; do not rebuild.
+FROM gcr.io/distroless/static:nonroot
+
+ARG TARGETPLATFORM
+COPY ${TARGETPLATFORM}/hookglass /hookglass
+
+ENV HOME=/tmp \
+  HOOKGLASS__LISTEN_ADDRESS=:8080
+
+USER 65532:65532
+
+ENTRYPOINT ["/hookglass"]

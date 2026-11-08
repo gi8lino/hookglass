@@ -1,0 +1,12 @@
+# Slack: HMAC-SHA256 of "v0:" + timestamp + ":" + raw body.
+hmac:
+  enabled: true
+  secret-env: WEBHOOK_SECRET
+  algorithm: sha256
+  signature-header: X-Slack-Signature
+  signature-prefix: "v0="
+  signature-encoding: hex
+  message-format: "v0:{timestamp}:{body}"
+  timestamp-header: X-Slack-Request-Timestamp
+  timestamp-format: unix
+  max-age: 5m

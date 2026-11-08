@@ -1,0 +1,4 @@
+# Expect Authorization: Bearer <WEBHOOK_TOKEN>.
+bearer:
+  enabled: true
+  token-env: WEBHOOK_TOKEN

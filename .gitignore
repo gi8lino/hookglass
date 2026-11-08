@@ -1,0 +1,10 @@
+/bin/*
+!/bin/dev-tools.mk
+/build/
+/dist/
+*.log
+.env
+/.dev-ports.json
+/.dev-ports.json.lock
+/coverage.out
+/coverage.html
