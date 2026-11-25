@@ -83,7 +83,7 @@ func TestBearer(t *testing.T) {
 	t.Run("control", func(t *testing.T) {
 		t.Parallel()
 
-		header := http.Header{"Authorization": {"Bearer my-token"}}
+		header := http.Header{"Authorization": {"Bearer my\x7ftoken"}}
 		assert.False(t, verifier.Valid(header, nil, time.Time{}))
 	})
 
@@ -129,7 +129,7 @@ func TestNewBearer(t *testing.T) {
 	t.Run("control", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := newBearer(config.Bearer{TokenEnv: "TOKEN"}, lookupValues(map[string]string{"TOKEN": "ab"}))
+		_, err := newBearer(config.Bearer{TokenEnv: "TOKEN"}, lookupValues(map[string]string{"TOKEN": "a\x7fb"}))
 		require.ErrorContains(t, err, "bearer token")
 	})
 }
