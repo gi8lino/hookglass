@@ -84,7 +84,7 @@ bearer:
   token-env: WEBHOOK_TOKEN
 ```
 
-Each verification route is optional and **only registered when `enabled: true`**. Secrets and expected values are read from the named environment variables at startup, not from the YAML file. Missing or invalid enabled-route configuration prevents startup.
+Each verification route is optional and **only registered when `enabled: true`**. Secrets and expected values are read from the named environment variables at startup, not from the YAML file. Missing or empty environment variables and invalid enabled-route configuration prevent startup. Credential values are never trimmed. Header credentials must not contain invalid HTTP field-value bytes or leading/trailing HTTP whitespace; Bearer tokens must not contain whitespace or invalid HTTP field-value bytes.
 
 ### Verification settings
 

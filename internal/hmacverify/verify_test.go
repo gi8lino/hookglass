@@ -24,78 +24,90 @@ func TestValid(t *testing.T) {
 	timestamp := strconv.FormatInt(now.Unix(), 10)
 	body := []byte(`{"text":"{timestamp}","data":"{body}"}`)
 
-	tests := []struct {
-		name          string
-		options       Options
-		message       []byte
-		timestamp     string
-		signatureName string
-		newHash       func() hash.Hash
-	}{
-		{
-			name: "Snitch and Warden",
-			options: Options{
-				Algorithm: "sha256", SignatureHeader: "X-Snitch-Signature", SignaturePrefix: "v1=",
-				SignatureEncoding: "hex", MessageFormat: "{timestamp}.{body}",
-				TimestampHeader: "X-Snitch-Timestamp", TimestampFormat: "unix", MaxAge: 5 * time.Minute,
-			},
-			message: append(append([]byte(timestamp), '.'), body...), timestamp: timestamp,
-			signatureName: "X-Snitch-Signature", newHash: sha256.New,
-		},
-		{
-			name: "GitHub",
-			options: Options{
-				Algorithm: "sha256", SignatureHeader: "X-Hub-Signature-256", SignaturePrefix: "sha256=",
-				SignatureEncoding: "hex", MessageFormat: "{body}",
-			},
-			message: body, signatureName: "X-Hub-Signature-256", newHash: sha256.New,
-		},
-		{
-			name: "Slack",
-			options: Options{
-				Algorithm: "sha256", SignatureHeader: "X-Slack-Signature", SignaturePrefix: "v0=",
-				SignatureEncoding: "hex", MessageFormat: "v0:{timestamp}:{body}",
-				TimestampHeader: "X-Slack-Request-Timestamp", TimestampFormat: "unix", MaxAge: 5 * time.Minute,
-			},
-			message: append(append([]byte("v0:"+timestamp), ':'), body...), timestamp: timestamp,
-			signatureName: "X-Slack-Signature", newHash: sha256.New,
-		},
-		{
-			name: "sha512 base64",
-			options: Options{
-				Algorithm: "sha512", SignatureHeader: "X-Signature", SignatureEncoding: "base64",
-				MessageFormat: "{body}",
-			},
-			message: body, signatureName: "X-Signature", newHash: sha512.New,
-		},
+	t.Run("Snitch and Warden", func(t *testing.T) {
+		t.Parallel()
+
+		options := Options{
+			Algorithm:         "sha256",
+			SignatureHeader:   "X-Snitch-Signature",
+			SignaturePrefix:   "v1=",
+			SignatureEncoding: "hex",
+			MessageFormat:     "{timestamp}.{body}",
+			TimestampHeader:   "X-Snitch-Timestamp",
+			TimestampFormat:   "unix",
+			MaxAge:            5 * time.Minute,
+		}
+		assertValidSignature(t, options, append([]byte(timestamp+"."), body...), body, timestamp, now, sha256.New)
+	})
+
+	t.Run("GitHub", func(t *testing.T) {
+		t.Parallel()
+
+		options := Options{
+			Algorithm:         "sha256",
+			SignatureHeader:   "X-Hub-Signature-256",
+			SignaturePrefix:   "sha256=",
+			SignatureEncoding: "hex",
+			MessageFormat:     "{body}",
+		}
+		assertValidSignature(t, options, body, body, "", now, sha256.New)
+	})
+
+	t.Run("Slack", func(t *testing.T) {
+		t.Parallel()
+
+		options := Options{
+			Algorithm:         "sha256",
+			SignatureHeader:   "X-Slack-Signature",
+			SignaturePrefix:   "v0=",
+			SignatureEncoding: "hex",
+			MessageFormat:     "v0:{timestamp}:{body}",
+			TimestampHeader:   "X-Slack-Request-Timestamp",
+			TimestampFormat:   "unix",
+			MaxAge:            5 * time.Minute,
+		}
+		assertValidSignature(t, options, append([]byte("v0:"+timestamp+":"), body...), body, timestamp, now, sha256.New)
+	})
+
+	t.Run("sha512 base64", func(t *testing.T) {
+		t.Parallel()
+
+		options := Options{
+			Algorithm:         "sha512",
+			SignatureHeader:   "X-Signature",
+			SignaturePrefix:   "",
+			SignatureEncoding: "base64",
+			MessageFormat:     "{body}",
+		}
+		assertValidSignature(t, options, body, body, "", now, sha512.New)
+	})
+}
+
+// assertValidSignature checks valid, modified and invalid signatures for one scheme.
+func assertValidSignature(t *testing.T, options Options, message, body []byte, timestamp string, now time.Time, newHash func() hash.Hash) {
+	t.Helper()
+
+	verifier, err := New([]byte("secret"), options)
+	require.NoError(t, err)
+
+	mac := hmac.New(newHash, []byte("secret"))
+	_, err = mac.Write(message)
+	require.NoError(t, err)
+	digest := hex.EncodeToString(mac.Sum(nil))
+	if options.SignatureEncoding == "base64" {
+		digest = base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			verifier, err := New([]byte("secret"), tt.options)
-			require.NoError(t, err)
-			mac := hmac.New(tt.newHash, []byte("secret"))
-			_, err = mac.Write(tt.message)
-			require.NoError(t, err)
-			digest := hex.EncodeToString(mac.Sum(nil))
-			if tt.options.SignatureEncoding == "base64" {
-				digest = base64.StdEncoding.EncodeToString(mac.Sum(nil))
-			}
-
-			headers := make(http.Header)
-			headers.Set(tt.signatureName, tt.options.SignaturePrefix+digest)
-			if tt.options.TimestampHeader != "" {
-				headers.Set(tt.options.TimestampHeader, tt.timestamp)
-			}
-			assert.True(t, verifier.Valid(headers, body, now), "valid signature rejected")
-			assert.False(t, verifier.Valid(headers, append(append([]byte(nil), body...), '!'), now), "modified body accepted")
-
-			headers.Set(tt.signatureName, tt.options.SignaturePrefix+"00")
-			assert.False(t, verifier.Valid(headers, body, now), "invalid signature accepted")
-		})
+	headers := make(http.Header)
+	headers.Set(options.SignatureHeader, options.SignaturePrefix+digest)
+	if options.TimestampHeader != "" {
+		headers.Set(options.TimestampHeader, timestamp)
 	}
+	assert.True(t, verifier.Valid(headers, body, now), "valid signature rejected")
+	assert.False(t, verifier.Valid(headers, append(append([]byte(nil), body...), '!'), now), "modified body accepted")
+
+	headers.Set(options.SignatureHeader, options.SignaturePrefix+"00")
+	assert.False(t, verifier.Valid(headers, body, now), "invalid signature accepted")
 }
 
 // TestFreshTimestamp verifies timestamp encodings and replay boundaries.
@@ -104,79 +116,241 @@ func TestFreshTimestamp(t *testing.T) {
 
 	now := time.Unix(1700000000, 0).UTC()
 	age := 5 * time.Minute
-	tests := []struct {
-		name   string
-		value  string
-		format string
-		valid  bool
-	}{
-		{"current unix", strconv.FormatInt(now.Unix(), 10), "unix", true},
-		{"old boundary", strconv.FormatInt(now.Add(-age).Unix(), 10), "unix", true},
-		{"future boundary", strconv.FormatInt(now.Add(age).Unix(), 10), "unix", true},
-		{"expired", strconv.FormatInt(now.Add(-age-time.Second).Unix(), 10), "unix", false},
-		{"too far in future", strconv.FormatInt(now.Add(age+time.Second).Unix(), 10), "unix", false},
-		{"plus prefix", "+1700000000", "unix", false},
-		{"leading zero", "01700000000", "unix", false},
-		{"invalid", "not-a-time", "unix", false},
-		{"unix milliseconds", strconv.FormatInt(now.UnixMilli(), 10), "unix-ms", true},
-		{"rfc3339", now.Format(time.RFC3339Nano), "rfc3339", true},
-		{"empty", "", "unix", false},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, tt.valid, freshTimestamp(tt.value, tt.format, age, now))
-		})
-	}
+	t.Run("current unix", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, freshTimestamp(strconv.FormatInt(now.Unix(), 10), "unix", age, now))
+	})
+
+	t.Run("old boundary", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, freshTimestamp(strconv.FormatInt(now.Add(-age).Unix(), 10), "unix", age, now))
+	})
+
+	t.Run("future boundary", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, freshTimestamp(strconv.FormatInt(now.Add(age).Unix(), 10), "unix", age, now))
+	})
+
+	t.Run("expired", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp(strconv.FormatInt(now.Add(-age-time.Second).Unix(), 10), "unix", age, now))
+	})
+
+	t.Run("too far in future", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp(strconv.FormatInt(now.Add(age+time.Second).Unix(), 10), "unix", age, now))
+	})
+
+	t.Run("plus prefix", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp("+1700000000", "unix", age, now))
+	})
+
+	t.Run("leading zero", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp("01700000000", "unix", age, now))
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp("not-a-time", "unix", age, now))
+	})
+
+	t.Run("unix milliseconds", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, freshTimestamp(strconv.FormatInt(now.UnixMilli(), 10), "unix-ms", age, now))
+	})
+
+	t.Run("rfc3339", func(t *testing.T) {
+		t.Parallel()
+
+		assert.True(t, freshTimestamp(now.Format(time.RFC3339Nano), "rfc3339", age, now))
+	})
+
+	t.Run("empty", func(t *testing.T) {
+		t.Parallel()
+
+		assert.False(t, freshTimestamp("", "unix", age, now))
+	})
 }
 
 // TestNewRejectsBadOptions ensures invalid schemes cannot be enabled silently.
 func TestNewRejectsBadOptions(t *testing.T) {
 	t.Parallel()
 
-	valid := Options{Algorithm: "sha256", SignatureHeader: "X-Signature", SignatureEncoding: "hex", MessageFormat: "{body}"}
-	tests := []struct {
-		name   string
-		change func(*Options)
-	}{
-		{"unsupported algorithm", func(o *Options) { o.Algorithm = "sha1" }},
-		{"unsupported encoding", func(o *Options) { o.SignatureEncoding = "raw" }},
-		{"missing signature header", func(o *Options) { o.SignatureHeader = "" }},
-		{"missing body", func(o *Options) { o.MessageFormat = "timestamp" }},
-		{"repeated body", func(o *Options) { o.MessageFormat = "{body}{body}" }},
-		{"unknown token", func(o *Options) { o.MessageFormat = "{unknown}{body}" }},
-		{"open placeholder", func(o *Options) { o.MessageFormat = "{body}{" }},
-		{"closing brace", func(o *Options) { o.MessageFormat = "{body}}" }},
-		{"missing timestamp settings", func(o *Options) { o.MessageFormat = "{timestamp}.{body}" }},
-		{"unexpected timestamp settings", func(o *Options) { o.MaxAge = time.Minute }},
-		{"missing timestamp format", func(o *Options) {
-			o.MessageFormat = "{timestamp}.{body}"
-			o.TimestampHeader = "X-Date"
-			o.MaxAge = time.Minute
-		}},
+	valid := Options{
+		Algorithm:         "sha256",
+		SignatureHeader:   "X-Signature",
+		SignatureEncoding: "hex",
+		MessageFormat:     "{body}",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			settings := valid
-			tt.change(&settings)
-			_, err := New([]byte("secret"), settings)
-			require.Error(t, err)
-		})
-	}
+	t.Run("unsupported algorithm", func(t *testing.T) {
+		t.Parallel()
 
-	_, err := New(nil, valid)
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "secret")
+		settings := valid
+		settings.Algorithm = "sha1"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("unsupported encoding", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.SignatureEncoding = "raw"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("missing signature header", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.SignatureHeader = ""
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("missing body", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "timestamp"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("repeated body", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{body}{body}"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("unknown token", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{unknown}{body}"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("open placeholder", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{body}{"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("closing brace", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{body}}"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("missing timestamp settings", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{timestamp}.{body}"
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("unexpected timestamp settings", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MaxAge = time.Minute
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("missing timestamp format", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{timestamp}.{body}"
+		settings.TimestampHeader = "X-Date"
+		settings.MaxAge = time.Minute
+
+		_, err := New([]byte("secret"), settings)
+		require.Error(t, err)
+	})
+
+	t.Run("invalid_signature_header", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.SignatureHeader = "Bad Header"
+
+		_, err := New([]byte("secret"), settings)
+		require.ErrorContains(t, err, "signature-header")
+	})
+
+	t.Run("invalid_timestamp_header", func(t *testing.T) {
+		t.Parallel()
+
+		settings := valid
+		settings.MessageFormat = "{timestamp}.{body}"
+		settings.TimestampHeader = "Bad:Header"
+		settings.TimestampFormat = "unix"
+		settings.MaxAge = time.Minute
+
+		_, err := New([]byte("secret"), settings)
+		require.ErrorContains(t, err, "timestamp-header")
+	})
+
+	t.Run("missing_secret", func(t *testing.T) {
+		t.Parallel()
+
+		_, err := New(nil, valid)
+		require.ErrorContains(t, err, "secret")
+	})
 }
 
 // TestTimestampTampering ensures signatures cannot be replayed outside their window.
 func TestTimestampTampering(t *testing.T) {
 	t.Parallel()
 
-	options := Options{Algorithm: "sha256", SignatureHeader: "X-Signature", SignatureEncoding: "hex", MessageFormat: "{timestamp}.{body}", TimestampHeader: "X-Timestamp", TimestampFormat: "unix", MaxAge: time.Minute}
+	options := Options{
+		Algorithm:         "sha256",
+		SignatureHeader:   "X-Signature",
+		SignatureEncoding: "hex",
+		MessageFormat:     "{timestamp}.{body}",
+		TimestampHeader:   "X-Timestamp",
+		TimestampFormat:   "unix",
+		MaxAge:            time.Minute,
+	}
 	verifier, err := New([]byte("secret"), options)
 	require.NoError(t, err)
 
@@ -200,9 +374,12 @@ func TestDuplicateHeaders(t *testing.T) {
 	t.Parallel()
 
 	verifier, err := New([]byte("secret"), Options{
-		Algorithm: "sha256", SignatureHeader: "X-Signature", SignatureEncoding: "hex",
-		MessageFormat: "{timestamp}.{body}", TimestampHeader: "X-Timestamp",
-		TimestampFormat: "unix", MaxAge: time.Minute,
+		Algorithm:         "sha256",
+		SignatureHeader:   "X-Signature",
+		SignatureEncoding: "hex",
+		MessageFormat:     "{timestamp}.{body}",
+		TimestampHeader:   "X-Timestamp",
+		TimestampFormat:   "unix", MaxAge: time.Minute,
 	})
 	require.NoError(t, err)
 
@@ -224,4 +401,21 @@ func TestDuplicateHeaders(t *testing.T) {
 	headers.Set("X-Signature", signature)
 	headers.Add("X-Timestamp", timestamp)
 	assert.False(t, verifier.Valid(headers, []byte("hello"), now), "duplicate timestamps accepted")
+}
+
+// TestNewCopiesSecret ensures the verifier owns its signing key.
+func TestNewCopiesSecret(t *testing.T) {
+	t.Parallel()
+
+	secret := []byte("secret")
+	verifier, err := New(secret, Options{
+		Algorithm:         "sha256",
+		SignatureHeader:   "X-Signature",
+		SignatureEncoding: "hex",
+		MessageFormat:     "{body}",
+	})
+	require.NoError(t, err)
+
+	secret[0] = 'X'
+	assert.Equal(t, []byte("secret"), verifier.secret)
 }

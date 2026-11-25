@@ -2,6 +2,7 @@
 package hmacverify
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -14,20 +15,31 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpguts"
 )
 
 // Options defines the signature scheme expected at the HMAC endpoint.
 type Options struct {
-	Algorithm         string
-	SignatureHeader   string
-	SignaturePrefix   string
+	// Algorithm selects the HMAC hash algorithm.
+	Algorithm string
+	// SignatureHeader names the header carrying the signature.
+	SignatureHeader string
+	// SignaturePrefix is the literal prefix preceding the encoded digest.
+	SignaturePrefix string
+	// SignatureEncoding selects the digest encoding.
 	SignatureEncoding string
-	MessageFormat     string
-	TimestampHeader   string
-	TimestampFormat   string
-	MaxAge            time.Duration
+	// MessageFormat defines the signed message template.
+	MessageFormat string
+	// TimestampHeader names the optional signed timestamp header.
+	TimestampHeader string
+	// TimestampFormat selects the timestamp encoding.
+	TimestampFormat string
+	// MaxAge limits timestamp deviation from the current time.
+	MaxAge time.Duration
 }
 
+// pieceKind identifies a signed-message segment.
 type pieceKind uint8
 
 const (
@@ -36,22 +48,34 @@ const (
 	timestampPiece
 )
 
+// piece represents one compiled signed-message segment.
 type piece struct {
-	kind  pieceKind
+	// kind identifies the segment type.
+	kind pieceKind
+	// value holds literal text for a literal segment.
 	value string
 }
 
 // Verifier holds a validated signature scheme and its secret.
 type Verifier struct {
-	secret            []byte
-	newHash           func() hash.Hash
-	signatureHeader   string
-	signaturePrefix   string
+	// secret holds a private copy of the signing secret.
+	secret []byte
+	// newHash creates the configured hash.
+	newHash func() hash.Hash
+	// signatureHeader names the incoming signature header.
+	signatureHeader string
+	// signaturePrefix is the required literal signature prefix.
+	signaturePrefix string
+	// signatureEncoding selects the signature decoder.
 	signatureEncoding string
-	message           []piece
-	timestampHeader   string
-	timestampFormat   string
-	maxAge            time.Duration
+	// message holds the compiled signed-message segments.
+	message []piece
+	// timestampHeader names the optional timestamp header.
+	timestampHeader string
+	// timestampFormat selects the timestamp parser.
+	timestampFormat string
+	// maxAge limits timestamp deviation.
+	maxAge time.Duration
 }
 
 // New compiles a webhook signature scheme and rejects unsafe or ambiguous settings.
@@ -59,8 +83,11 @@ func New(secret []byte, options Options) (verifier *Verifier, err error) {
 	if len(secret) == 0 {
 		return nil, errors.New("HMAC secret must not be empty")
 	}
-	if options.SignatureHeader == "" {
-		return nil, errors.New("signature-header is required")
+	if !httpguts.ValidHeaderFieldName(options.SignatureHeader) {
+		return nil, errors.New("signature-header must be a valid HTTP header name")
+	}
+	if options.TimestampHeader != "" && !httpguts.ValidHeaderFieldName(options.TimestampHeader) {
+		return nil, errors.New("timestamp-header must be a valid HTTP header name")
 	}
 
 	var newHash func() hash.Hash
@@ -97,7 +124,7 @@ func New(secret []byte, options Options) (verifier *Verifier, err error) {
 	}
 
 	return &Verifier{
-		secret:            append([]byte(nil), secret...),
+		secret:            bytes.Clone(secret),
 		newHash:           newHash,
 		signatureHeader:   options.SignatureHeader,
 		signaturePrefix:   options.SignaturePrefix,
@@ -118,20 +145,31 @@ func compileMessage(format string) (parts []piece, usesTimestamp bool, err error
 			if strings.ContainsRune(format, '}') {
 				return nil, false, errors.New("unmatched closing brace in message-format")
 			}
-			parts = append(parts, piece{kind: literalPiece, value: format})
+			parts = append(parts, piece{
+				kind:  literalPiece,
+				value: format,
+			})
 			break
 		}
+
 		if strings.ContainsRune(format[:start], '}') {
 			return nil, false, errors.New("unmatched closing brace in message-format")
 		}
+
 		if start > 0 {
-			parts = append(parts, piece{kind: literalPiece, value: format[:start]})
+			parts = append(parts, piece{
+				kind:  literalPiece,
+				value: format[:start],
+			})
 		}
+
 		end := strings.IndexByte(format[start:], '}')
 		if end == -1 {
 			return nil, false, errors.New("unclosed placeholder in message-format")
 		}
+
 		name := format[start+1 : start+end]
+
 		switch name {
 		case "body":
 			bodyCount++
@@ -142,11 +180,14 @@ func compileMessage(format string) (parts []piece, usesTimestamp bool, err error
 		default:
 			return nil, false, fmt.Errorf("unsupported message placeholder %q", name)
 		}
+
 		format = format[start+end+1:]
 	}
+
 	if bodyCount != 1 {
 		return nil, false, errors.New("message-format must contain {body} exactly once")
 	}
+
 	return parts, usesTimestamp, nil
 }
 
@@ -156,6 +197,7 @@ func (v *Verifier) Valid(headers http.Header, body []byte, now time.Time) bool {
 	if len(signatures) != 1 {
 		return false
 	}
+
 	signature := signatures[0]
 	if !strings.HasPrefix(signature, v.signaturePrefix) {
 		return false
@@ -164,12 +206,14 @@ func (v *Verifier) Valid(headers http.Header, body []byte, now time.Time) bool {
 
 	var provided []byte
 	var err error
+
 	switch v.signatureEncoding {
 	case "hex":
 		provided, err = hex.DecodeString(signature)
 	case "base64":
 		provided, err = base64.StdEncoding.DecodeString(signature)
 	}
+
 	if err != nil {
 		return false
 	}
@@ -180,6 +224,7 @@ func (v *Verifier) Valid(headers http.Header, body []byte, now time.Time) bool {
 		if len(timestamps) != 1 {
 			return false
 		}
+
 		timestamp = timestamps[0]
 		if !freshTimestamp(timestamp, v.timestampFormat, v.maxAge, now) {
 			return false
@@ -197,12 +242,14 @@ func (v *Verifier) Valid(headers http.Header, body []byte, now time.Time) bool {
 			_, _ = mac.Write([]byte(timestamp))
 		}
 	}
+
 	return hmac.Equal(provided, mac.Sum(nil))
 }
 
 // freshTimestamp accepts a canonical timestamp within the permitted replay window.
 func freshTimestamp(value, format string, maxAge time.Duration, now time.Time) bool {
 	var timestamp time.Time
+
 	switch format {
 	case "unix", "unix-ms":
 		seconds, err := strconv.ParseInt(value, 10, 64)

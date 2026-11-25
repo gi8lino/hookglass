@@ -32,12 +32,12 @@ func TestEcho(t *testing.T) {
 	server.Handler.ServeHTTP(response, request)
 
 	require.Equal(t, http.StatusNoContent, response.Code)
-	for _, want := range []string{"webhook received", "path=/echo", "203.0.113.10", "verified=false"} {
-		assert.Contains(t, output.String(), want)
-	}
-	for _, secret := range []string{"Bearer secret-token", "sensitive-signature"} {
-		assert.NotContains(t, output.String(), secret)
-	}
+	assert.Contains(t, output.String(), "webhook received")
+	assert.Contains(t, output.String(), "path=/echo")
+	assert.Contains(t, output.String(), "203.0.113.10")
+	assert.Contains(t, output.String(), "verified=false")
+	assert.NotContains(t, output.String(), "Bearer secret-token")
+	assert.NotContains(t, output.String(), "sensitive-signature")
 }
 
 // TestHMAC verifies that only authenticated webhook bodies are logged.
@@ -45,7 +45,11 @@ func TestHMAC(t *testing.T) {
 	t.Parallel()
 
 	verifier, err := hmacverify.New([]byte("secret"), hmacverify.Options{
-		Algorithm: "sha256", SignatureHeader: "X-Signature", SignaturePrefix: "sha256=", SignatureEncoding: "hex", MessageFormat: "{body}",
+		Algorithm:         "sha256",
+		SignatureHeader:   "X-Signature",
+		SignaturePrefix:   "sha256=",
+		SignatureEncoding: "hex",
+		MessageFormat:     "{body}",
 	})
 	require.NoError(t, err)
 
@@ -114,66 +118,152 @@ func TestOptionalRoutes(t *testing.T) {
 	t.Parallel()
 
 	server := New("127.0.0.1:8080", 100, verification.Routes{}, slog.Default())
-	for _, route := range []string{"/hmac", "/header", "/bearer"} {
-		t.Run(route, func(t *testing.T) {
-			t.Parallel()
-			request := httptest.NewRequest(http.MethodPost, route, nil)
-			response := httptest.NewRecorder()
-			server.Handler.ServeHTTP(response, request)
-			assert.Equal(t, http.StatusNotFound, response.Code)
-		})
-	}
+
+	t.Run("/hmac", func(t *testing.T) {
+		t.Parallel()
+
+		request := httptest.NewRequest(http.MethodPost, "/hmac", nil)
+		response := httptest.NewRecorder()
+		server.Handler.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusNotFound, response.Code)
+	})
+
+	t.Run("/header", func(t *testing.T) {
+		t.Parallel()
+
+		request := httptest.NewRequest(http.MethodPost, "/header", nil)
+		response := httptest.NewRecorder()
+		server.Handler.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusNotFound, response.Code)
+	})
+
+	t.Run("/bearer", func(t *testing.T) {
+		t.Parallel()
+
+		request := httptest.NewRequest(http.MethodPost, "/bearer", nil)
+		response := httptest.NewRecorder()
+		server.Handler.ServeHTTP(response, request)
+
+		assert.Equal(t, http.StatusNotFound, response.Code)
+	})
 }
 
 // TestHeaderAndBearer verifies invalid credentials are rejected without logging.
 func TestHeaderAndBearer(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name       string
-		path       string
-		verifiers  verification.Routes
-		validName  string
-		validValue string
-	}{
-		{name: "header", path: "/header", verifiers: verification.Routes{Header: testHeaderVerifier{name: "X-API-Key", value: "test-key"}}, validName: "X-API-Key", validValue: "test-key"},
-		{name: "bearer", path: "/bearer", verifiers: verification.Routes{Bearer: testHeaderVerifier{name: "Authorization", value: "Bearer test-token"}}, validName: "Authorization", validValue: "Bearer test-token"},
-	}
+	t.Run("header", func(t *testing.T) {
+		t.Parallel()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		verifiers := verification.Routes{Header: testHeaderVerifier{
+			name:  "X-API-Key",
+			value: "test-key",
+		}}
+
+		t.Run("missing", func(t *testing.T) {
 			t.Parallel()
 
 			var output bytes.Buffer
-			server := New("127.0.0.1:8080", 100, tt.verifiers, slog.New(slog.NewTextHandler(&output, nil)))
-			for _, attempt := range []struct {
-				name  string
-				value string
-				want  int
-			}{
-				{"missing", "", http.StatusUnauthorized},
-				{"wrong", "incorrect", http.StatusUnauthorized},
-				{"correct", tt.validValue, http.StatusNoContent},
-			} {
-				t.Run(attempt.name, func(t *testing.T) {
-					request := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader("hello"))
-					if attempt.value != "" {
-						request.Header.Set(tt.validName, attempt.value)
-					}
-					response := httptest.NewRecorder()
-					server.Handler.ServeHTTP(response, request)
-					assert.Equal(t, attempt.want, response.Code)
-				})
-			}
-			assert.Equal(t, 1, strings.Count(output.String(), "webhook received"))
-			assert.NotContains(t, output.String(), tt.validValue)
-			assert.NotContains(t, output.String(), "incorrect")
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/header", strings.NewReader("hello"))
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+			assert.Empty(t, output.String())
 		})
-	}
+
+		t.Run("wrong", func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/header", strings.NewReader("hello"))
+			request.Header.Set("X-API-Key", "incorrect")
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+			assert.Empty(t, output.String())
+		})
+
+		t.Run("correct", func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/header", strings.NewReader("hello"))
+			request.Header.Set("X-API-Key", "test-key")
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusNoContent, response.Code)
+			assert.Equal(t, 1, strings.Count(output.String(), "webhook received"))
+			assert.NotContains(t, output.String(), "test-key")
+		})
+	})
+
+	t.Run("bearer", func(t *testing.T) {
+		t.Parallel()
+
+		verifiers := verification.Routes{Bearer: testHeaderVerifier{
+			name:  "Authorization",
+			value: "Bearer test-token",
+		}}
+
+		t.Run("missing", func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/bearer", strings.NewReader("hello"))
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+			assert.Empty(t, output.String())
+		})
+
+		t.Run("wrong", func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/bearer", strings.NewReader("hello"))
+			request.Header.Set("Authorization", "incorrect")
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusUnauthorized, response.Code)
+			assert.Empty(t, output.String())
+		})
+
+		t.Run("correct", func(t *testing.T) {
+			t.Parallel()
+
+			var output bytes.Buffer
+			server := New("127.0.0.1:8080", 100, verifiers, slog.New(slog.NewTextHandler(&output, nil)))
+			request := httptest.NewRequest(http.MethodPost, "/bearer", strings.NewReader("hello"))
+			request.Header.Set("Authorization", "Bearer test-token")
+			response := httptest.NewRecorder()
+			server.Handler.ServeHTTP(response, request)
+
+			assert.Equal(t, http.StatusNoContent, response.Code)
+			assert.Equal(t, 1, strings.Count(output.String(), "webhook received"))
+			assert.NotContains(t, output.String(), "Bearer test-token")
+		})
+	})
 }
 
 // testHeaderVerifier tests route wiring independently of authentication implementations.
-type testHeaderVerifier struct{ name, value string }
+type testHeaderVerifier struct {
+	// name is the expected request header.
+	name string
+	// value is the expected header value.
+	value string
+}
 
 // Valid checks the expected test header.
 func (v testHeaderVerifier) Valid(headers http.Header, _ []byte, _ time.Time) bool {

@@ -51,8 +51,7 @@ func receive(maxBodyBytes int64, verifier verification.Verifier, logger *slog.Lo
 	return func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBodyBytes))
 		if err != nil {
-			var tooLarge *http.MaxBytesError
-			if errors.As(err, &tooLarge) {
+			if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 				http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
 			} else {
 				http.Error(w, "invalid request body", http.StatusBadRequest)

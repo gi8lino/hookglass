@@ -105,5 +105,6 @@ func Load(path string) (settings Config, err error) {
 	if settings.MaxBodyBytes <= 0 {
 		return settings, errors.New("max-body-bytes must be positive")
 	}
+
 	return settings, nil
 }

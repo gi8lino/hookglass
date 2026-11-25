@@ -26,46 +26,91 @@ func TestLoadDefaults(t *testing.T) {
 func TestLoadStrict(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		content string
-		valid   bool
-	}{
-		{
-			name: "valid",
-			content: "max-body-bytes: 128\nhmac:\n  enabled: true\nheader:\n" +
-				"  enabled: true\n  name: X-Key\n  value-env: HEADER_SECRET\n" +
-				"bearer:\n  enabled: true\n  token-env: BEARER_TOKEN\n",
-			valid: true,
-		},
-		{name: "unknown", content: "bad-field: yes\n"},
-		{name: "removed listen address", content: "listen-address: ':8080'\n"},
-		{name: "duplicate", content: "max-body-bytes: 64\nmax-body-bytes: 128\n"},
-		{name: "two documents", content: "max-body-bytes: 128\n---\nmax-body-bytes: 256\n"},
-		{name: "invalid body limit", content: "max-body-bytes: 0\n"},
-		{name: "negative body limit", content: "max-body-bytes: -1\n"},
-		{name: "malformed", content: "max-body-bytes: [\n"},
-	}
+	t.Run("valid", func(t *testing.T) {
+		t.Parallel()
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: 128\nhmac:\n  enabled: true\nheader:\n"+
+			"  enabled: true\n  name: X-Key\n  value-env: HEADER_SECRET\n"+
+			"bearer:\n  enabled: true\n  token-env: BEARER_TOKEN\n"), 0o600))
 
-			path := filepath.Join(t.TempDir(), "hookglass.yaml")
-			require.NoError(t, os.WriteFile(path, []byte(tt.content), 0o600))
+		settings, err := Load(path)
+		require.NoError(t, err)
+		assert.EqualValues(t, 128, settings.MaxBodyBytes)
+		assert.True(t, settings.HMAC.Enabled)
+		assert.True(t, settings.Header.Enabled)
+		assert.True(t, settings.Bearer.Enabled)
+	})
 
-			settings, err := Load(path)
-			if !tt.valid {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.EqualValues(t, 128, settings.MaxBodyBytes)
-			assert.True(t, settings.HMAC.Enabled)
-			assert.True(t, settings.Header.Enabled)
-			assert.True(t, settings.Bearer.Enabled)
-		})
-	}
+	t.Run("unknown", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("bad-field: yes\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("removed listen address", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("listen-address: ':8080'\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("duplicate", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: 64\nmax-body-bytes: 128\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("two documents", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: 128\n---\nmax-body-bytes: 256\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("invalid body limit", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: 0\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("negative body limit", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: -1\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
+
+	t.Run("malformed", func(t *testing.T) {
+		t.Parallel()
+
+		path := filepath.Join(t.TempDir(), "hookglass.yaml")
+		require.NoError(t, os.WriteFile(path, []byte("max-body-bytes: [\n"), 0o600))
+
+		_, err := Load(path)
+		require.Error(t, err)
+	})
 }
 
 // TestLoadMissingFile reports a descriptive error when a config file cannot be opened.
