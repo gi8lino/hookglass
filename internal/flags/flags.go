@@ -2,6 +2,7 @@
 package flags
 
 import (
+	appkitconfig "github.com/containeroo/appkit/config"
 	"github.com/containeroo/tinyflags"
 )
 
@@ -9,25 +10,34 @@ import (
 type Options struct {
 	// ConfigFile identifies the optional YAML configuration file.
 	ConfigFile string
-	// ListenAddress overrides the YAML listener address when set.
+	// ListenAddress specifies the application HTTP listen address.
 	ListenAddress string
+	// Logging contains diagnostic and access logging settings.
+	Logging appkitconfig.Logging
 }
 
 // Parse reads Hookglass flags and returns the selected configuration overrides.
 func Parse(args []string, version string) (options Options, err error) {
-	fs := tinyflags.NewFlagSet("hookglass", tinyflags.ContinueOnError)
-	fs.Version(version)
-	fs.EnvPrefix("HOOKGLASS_")
-	fs.MaxPositional(0)
+	tf := tinyflags.NewFlagSet("hookglass", tinyflags.ContinueOnError)
+	tf.Version(version)
+	tf.EnvPrefix("HOOKGLASS_")
+	tf.MaxPositional(0)
 
-	configFile := fs.String("config", "", "YAML configuration file").
+	configFile := tf.String("config", "", "YAML configuration file").
 		Value()
-	listenAddress := fs.String("listen-address", "127.0.0.1:8080", "Application listen address").
+	listenAddress := tf.String("listen-address", "127.0.0.1:8080", "Application listen address").
 		Value()
 
-	if err := fs.Parse(args); err != nil {
+	finalizeLogging := appkitconfig.RegisterLogging(tf, &options.Logging)
+
+	if err := tf.Parse(args); err != nil {
 		return options, err
 	}
 
-	return Options{ConfigFile: *configFile, ListenAddress: *listenAddress}, nil
+	options.ConfigFile = *configFile
+	options.ListenAddress = *listenAddress
+
+	finalizeLogging()
+
+	return options, nil
 }

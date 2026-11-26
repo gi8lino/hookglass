@@ -3,6 +3,7 @@ module github.com/gi8lino/hookglass
 go 1.27.3
 
 require (
+	github.com/containeroo/appkit v0.8.1
 	github.com/containeroo/httpkit v0.2.0
 	github.com/containeroo/tinyflags v0.12.0
 	github.com/stretchr/testify v1.12.1
