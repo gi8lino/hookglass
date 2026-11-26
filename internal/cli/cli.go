@@ -1,13 +1,13 @@
 // Package flags parses Hookglass command-line and environment overrides.
-package flags
+package cli
 
 import (
 	appkitconfig "github.com/containeroo/appkit/config"
 	"github.com/containeroo/tinyflags"
 )
 
-// Options holds command-line overrides for the application configuration.
-type Options struct {
+// Flags holds command-line overrides for the application configuration.
+type Flags struct {
 	// ConfigFile identifies the optional YAML configuration file.
 	ConfigFile string
 	// ListenAddress specifies the application HTTP listen address.
@@ -17,7 +17,7 @@ type Options struct {
 }
 
 // Parse reads Hookglass flags and returns the selected configuration overrides.
-func Parse(args []string, version string) (options Options, err error) {
+func Parse(argv []string, version string) (flags Flags, err error) {
 	tf := tinyflags.NewFlagSet("hookglass", tinyflags.ContinueOnError)
 	tf.Version(version)
 	tf.EnvPrefix("HOOKGLASS_")
@@ -28,16 +28,16 @@ func Parse(args []string, version string) (options Options, err error) {
 	listenAddress := tf.String("listen-address", "127.0.0.1:8080", "Application listen address").
 		Value()
 
-	finalizeLogging := appkitconfig.RegisterLogging(tf, &options.Logging)
+	finalizeLogging := appkitconfig.RegisterLogging(tf, &flags.Logging)
 
-	if err := tf.Parse(args); err != nil {
-		return options, err
+	if err := tf.Parse(argv); err != nil {
+		return flags, err
 	}
 
-	options.ConfigFile = *configFile
-	options.ListenAddress = *listenAddress
+	flags.ConfigFile = *configFile
+	flags.ListenAddress = *listenAddress
 
 	finalizeLogging()
 
-	return options, nil
+	return flags, nil
 }

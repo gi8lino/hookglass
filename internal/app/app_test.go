@@ -3,8 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/json"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,19 +19,21 @@ func TestRun(t *testing.T) {
 		t.Parallel()
 
 		path := filepath.Join(t.TempDir(), "missing.yaml")
-		var logs bytes.Buffer
+		var stdout, stderr bytes.Buffer
 
-		err := Run(context.Background(), "test", []string{"--config=" + path}, io.Discard, io.Discard)
+		err := Run(context.Background(), "test", []string{"--config=" + path}, &stdout, &stderr)
 		require.ErrorContains(t, err, "load configuration:")
 		assert.ErrorIs(t, err, os.ErrNotExist)
 
-		var entry map[string]any
-		require.NoError(t, json.Unmarshal(logs.Bytes(), &entry))
-		assert.Equal(t, "ERROR", entry["level"])
-		assert.Equal(t, "failed to load configuration", entry["msg"])
-		assert.Equal(t, "config_failed", entry["event"])
-		assert.Equal(t, path, entry["config_file"])
-		assert.Contains(t, entry["error"], "open configuration")
+		logs := stdout.String()
+		assert.Contains(t, logs, "failed to load configuration")
+		assert.Contains(t, logs, "event")
+		assert.Contains(t, logs, "config_failed")
+		assert.Contains(t, logs, "config_file")
+		assert.Contains(t, logs, path)
+		assert.Contains(t, logs, "error")
+		assert.Contains(t, logs, "open configuration")
+		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("verification_failure", func(t *testing.T) {
@@ -46,13 +46,15 @@ func TestRun(t *testing.T) {
 		err := Run(context.Background(), "test", []string{"--config=" + path}, &stdout, &stderr)
 		require.ErrorContains(t, err, "initialize webhook verification: bearer: token-env is required")
 
-		var entry map[string]any
-		require.NoError(t, json.Unmarshal(stderr.Bytes(), &entry))
-		assert.Equal(t, "ERROR", entry["level"])
-		assert.Equal(t, "failed to initialize webhook verification", entry["msg"])
-		assert.Equal(t, "verifiers_failed", entry["event"])
-		assert.Equal(t, path, entry["config_file"])
-		assert.Equal(t, "bearer: token-env is required", entry["error"])
+		logs := stdout.String()
+		assert.Contains(t, logs, "failed to initialize webhook verification")
+		assert.Contains(t, logs, "event")
+		assert.Contains(t, logs, "verifiers_failed")
+		assert.Contains(t, logs, "config_file")
+		assert.Contains(t, logs, path)
+		assert.Contains(t, logs, "error")
+		assert.Contains(t, logs, "bearer: token-env is required")
+		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("flag_failure", func(t *testing.T) {
@@ -61,8 +63,8 @@ func TestRun(t *testing.T) {
 		var stdout, stderr bytes.Buffer
 
 		err := Run(context.Background(), "test", []string{"unexpected"}, &stdout, &stderr)
-		require.ErrorContains(t, err, "parse flags:")
+		require.ErrorContains(t, err, "expected at most 0 positional arguments, got 1")
 		assert.Empty(t, stdout.String())
-		assert.NotEmpty(t, stderr.String())
+		assert.Equal(t, err.Error()+"\n", stderr.String())
 	})
 }

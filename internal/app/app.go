@@ -10,15 +10,15 @@ import (
 
 	"github.com/containeroo/httpkit/grace"
 	"github.com/containeroo/tinyflags"
+	"github.com/gi8lino/hookglass/internal/cli"
 	"github.com/gi8lino/hookglass/internal/config"
-	"github.com/gi8lino/hookglass/internal/flags"
 	"github.com/gi8lino/hookglass/internal/server"
 	"github.com/gi8lino/hookglass/internal/verification"
 )
 
 // Run starts Hookglass and handles command-line errors and operating-system signals.
 func Run(ctx context.Context, version string, args []string, stdout, stderr io.Writer) error {
-	flags, err := flags.Parse(args, version)
+	flags, err := cli.Parse(args, version)
 	if err != nil {
 		if tinyflags.IsHelpRequested(err) || tinyflags.IsVersionRequested(err) {
 			fmt.Fprint(stdout, err.Error()) // nolint:errcheck
